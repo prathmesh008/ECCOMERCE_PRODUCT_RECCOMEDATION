@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-commerce Product Recommender (LLM & MF)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        .scroll-area {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app" class="min-h-screen p-4 sm:p-8">
+    <!-- Header -->
+    <header class="mb-8">
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-indigo-700">🛒 Smart Product Recommender</h1>
+        <p class="text-gray-500 mt-1">Matrix Factorization (SGD) + Gemini AI Explanations</p>
+    </header>
+
+    <!-- User & Status Panel -->
+    <div id="status-panel" class="mb-6 p-4 bg-white shadow-md rounded-lg border border-gray-100">
+        <p class="text-sm font-semibold text-gray-700">
+            Current User ID: <span id="user-id-display" class="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded text-indigo-600">Loading...</span>
+        </p>
+        <div class="mt-2 flex items-center">
+            <label for="user-select" class="block text-sm font-medium text-gray-700 mr-4">Select User:</label>
+            <select id="user-select" class="mt-1 block w-40 pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md bg-gray-50">
+                <!-- Options populated by JS -->
+            </select>
+            <button onclick="fetchRecommendations()" id="recommend-button" class="ml-4 px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                Get Recommendations
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- User History & Catalog -->
+        <div class="lg:col-span-1 p-5 bg-white shadow-xl rounded-xl">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">User History & Catalog</h2>
+            
+            <div id="user-history-panel" class="scroll-area bg-gray-50 p-3 rounded-lg border mb-4">
+                <p class="text-sm text-gray-500">Loading user history...</p>
+            </div>
+
+            <h3 class="text-lg font-semibold text-gray-700 mt-6 mb-2">Full Product Catalog</h3>
+            <div id="catalog-list" class="scroll-area text-xs text-gray-600 space-y-1">
+                <!-- Catalog items populated by JS -->
+            </div>
+        </div>
+
+        <!-- Recommendations & Explanation -->
+        <div class="lg:col-span-2 p-5 bg-white shadow-xl rounded-xl">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">Top <span id="rec-count">3</span> Recommendations</h2>
+            
+            <!-- Placeholder message displayed initially -->
+            <div id="initial-message" class="text-center py-12 text-gray-500 space-y-6">
+                Select a user and click 'Get Recommendations' to begin.
+            </div>
+
+            <!-- Container for recommendations (hidden initially) -->
+            <div id="recommendations-container" class="space-y-6 hidden">
+                <!-- Recommendations will be injected here -->
+            </div>
+
+            <!-- Loading spinner (hidden initially) -->
+            <div id="loading-spinner" class="hidden text-center py-12">
+                <div class="animate-spin inline-block w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full"></div>
+                <p class="text-indigo-600 mt-2">Training Matrix Factorization Model & Generating explanations...</p>
+            </div>
+
+        </div>
+
+    </div>
+</div>
+
+<!-- Firebase and Custom Script -->
+<script type="module">
+    // Firebase Imports
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc, collection, getDocs, runTransaction, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    
+    // --- Global Configuration ---
+    const API_KEY = ""; // Automatically handled by Canvas environment
+    const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent";
+    const APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'default-recommender-app';
+    const FIREBASE_CONFIG = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+    const INITIAL_AUTH_TOKEN = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    let db, auth, currentUserId;
+    
+    // --- Mock Data ---
+    const PRODUCT_CATALOG = {
+        "B07JW9H4J1": { name: "Wayona Lightning Cable", category: "Computers&Accessories", price: 399 },
+        "B09GW5G3C4": { name: "Smart Watch XYZ", category: "Electronics", price: 1999 },
+        "B08F22K63C": { name: "Ergonomic Office Chair", category: "Office Furniture", price: 8999 },
+        "B0BJ611P57": { name: "Wireless Bluetooth Earbuds", category: "Electronics", price: 1299 },
+        "B07D99W7J3": { name: "Stainless Steel Water Bottle", category: "Home&Kitchen", price: 599 },
+        "B07KRRQ837": { name: "Dog Chew Toy", category: "Pet Supplies", price: 299 },
+        "B0CHW33RMP": { name: "Premium Coffee Maker", category: "Home&Kitchen", price: 2499 },
+        "B07GZ58YV5": { name: "Gaming Headset", category: "Electronics", price: 3500 },
+        "B08138P7W7": { name: "Portable Speaker", category: "Electronics", price: 1500 },
+    };
+    
+    const INITIAL_INTERACTIONS = [
+        // These interactions are used for Matrix Factorization training (interaction_value=1)
+        { userId: "user-101", productId: "B07JW9H4J1" },
+        { userId: "user-101", productId: "B0BJ611P57" },
+        { userId: "user-102", productId: "B09GW5G3C4" },
+        { userId: "user-102", productId: "B07GZ58YV5" },
+        { userId: "user-104", productId: "B0BJ611P57" },
+        { userId: "user-104", productId: "B08138P7W7" },
+        { userId: "user-103", productId: "B08F22K63C" },
+        { userId: "user-103", productId: "B07D99W7J3" },
+        { userId: "user-105", productId: "B0CHW33RMP" },
+        { userId: "user-105", productId: "B07D99W7J3" },
+        { userId: "user-106", productId: "B07KRRQ837" },
+        { userId: "user-106", productId: "B07D99W7J3" },
+    ];
+
+    const MOCK_USER_IDS = Array.from(new Set(INITIAL_INTERACTIONS.map(i => i.userId)));
+
+    // --- Firebase and Initialization ---
+
+    async function initializeFirebase() {
+        if (!FIREBASE_CONFIG) {
+            console.error("Firebase config not available.");
+            document.getElementById('status-panel').innerHTML = '<p class="text-red-500">Error: Firebase configuration is missing.</p>';
+            return;
+        }
+
+        const app = initializeApp(FIREBASE_CONFIG);
+        db = getFirestore(app);
+        auth = getAuth(app);
+        
+        try {
+            if (INITIAL_AUTH_TOKEN) {
+                await signInWithCustomToken(auth, INITIAL_AUTH_TOKEN);
+            } else {
+                await signInAnonymously(auth);
+            }
+            currentUserId = auth.currentUser.uid;
+            console.log("Firebase initialized. Auth successful.");
+            
+            await setupInitialData();
+            setupUI();
+            
+        } catch (error) {
+            console.error("Firebase Authentication failed:", error);
+            document.getElementById('status-panel').innerHTML = '<p class="text-red-500">Error: Authentication failed.</p>';
+        }
+    }
+
+    // Use the public collection path for shared interaction data
+    function getInteractionsCollectionRef() {
+        return collection(db, `artifacts/${APP_ID}/public/data/interactions`);
+    }
+
+    async function setupInitialData() {
+        const docRef = doc(db, `artifacts/${APP_ID}/public/data/metadata`, 'initialized');
+        
+        try {
+            await runTransaction(db, async (transaction) => {
+                const initializedDoc = await transaction.get(docRef);
+
+                if (!initializedDoc.exists() || !initializedDoc.data().is_initialized) {
+                    console.log("Initializing interactions data in Firestore...");
+                    const batchWrites = [];
+                    const interactionsRef = getInteractionsCollectionRef();
+                    
+                    for (const interaction of INITIAL_INTERACTIONS) {
+                        const fixedDocId = `${interaction.userId}_${interaction.productId}`;
+                        const newDocRef = doc(interactionsRef, fixedDocId); 
+                        batchWrites.push(setDoc(newDocRef, {
+                            user_id: interaction.userId,
+                            product_id: interaction.productId,
+                            timestamp: Date.now(),
+                            interaction_value: 1 // Use 1 for implicit feedback (purchased/clicked)
+                        }));
+                    }
+                    
+                    await Promise.all(batchWrites);
+
+                    transaction.set(docRef, { is_initialized: true });
+                    console.log("Interactions data successfully initialized and duplicates guarded.");
+                } else {
+                    console.log("Interactions data already initialized.");
+                }
+            });
+        } catch (e) {
+            console.error("Transaction failed during data setup:", e);
+        }
+    }
+
+    /**
+     * Helper function to retrieve all interactions from Firestore.
+     */
+    async function getAllInteractions() {
+        const interactionsRef = getInteractionsCollectionRef();
+        const snapshot = await getDocs(interactionsRef);
+        const interactions = snapshot.docs.map(doc => doc.data());
+        console.log(`[DATA] Retrieved ${interactions.length} total interactions from Firestore.`);
+        return interactions;
+    }
+
+    // --- Matrix Factorization (MF) Model using SGD ---
+    
+    // Hyperparameters for the Matrix Factorization model
+    const MF_CONFIG = {
+        FACTORS: 2,          // Number of latent factors (dimensionality of P and Q matrices)
+        LEARNING_RATE: 0.01, // Learning rate for Stochastic Gradient Descent
+        REGULARIZATION: 0.01, // Regularization term to prevent overfitting
+        ITERATIONS: 100,     // Number of training iterations (epochs)
+        DEFAULT_RATING: 0.0  // Default rating for unobserved interactions
+    };
+
+    /**
+     * Trains the Matrix Factorization model using Stochastic Gradient Descent.
+     * @param {Array<Object>} interactions - Array of user-product interaction objects.
+     * @returns {Object} { P, Q, userMap, itemMap, userItemMap }
+     */
+    function trainMatrixFactorizationModel(interactions) {
+        console.log("[MODEL] Starting Matrix Factorization training...");
+
+        // 1. Build Mappings and Interaction Matrix (R)
+        const userMap = {}; // Maps user ID to internal index
+        const itemMap = {}; // Maps item ID to internal index
+        const userList = [];
+        const itemList = [];
+        const userItemMap = {}; // userId -> Set of purchased item IDs
+
+        let uIndex = 0;
+        let iIndex = 0;
+
+        for (const { user_id, product_id, interaction_value } of interactions) {
+            if (!(user_id in userMap)) {
+                userMap[user_id] = uIndex++;
+                userList.push(user_id);
+            }
+            if (!(product_id in itemMap)) {
+                itemMap[product_id] = iIndex++;
+                itemList.push(product_id);
+            }
+
+            const u = userMap[user_id];
+            const i = itemMap[product_id];
+
+            if (!userItemMap[user_id]) userItemMap[user_id] = new Set();
+            userItemMap[user_id].add(product_id);
+        }
+
+        const numUsers = uIndex;
+        const numItems = iIndex;
+        const K = MF_CONFIG.FACTORS;
+        
+        // Interaction data formatted for training [userIndex, itemIndex, rating]
+        const trainingData = interactions.map(i => [
+            userMap[i.user_id],
+            itemMap[i.product_id],
+            i.interaction_value || 1 // Use 1 for observed interaction
+        ]);
+
+        // 2. Initialize Latent Feature Matrices P (Users) and Q (Items)
+        const P = Array(numUsers).fill(0).map(() => Array(K).fill(0).map(() => Math.random() * 0.1));
+        const Q = Array(numItems).fill(0).map(() => Array(K).fill(0).map(() => Math.random() * 0.1));
+        
+        let iter;
+        // 3. Training Loop (SGD)
+        for (iter = 0; iter < MF_CONFIG.ITERATIONS; iter++) {
+            let totalError = 0;
+
+            for (const [u, i, r_ui] of trainingData) {
+                // Predict rating: r_hat_ui = P_u * Q_i^T
+                let r_hat_ui = 0;
+                for (let k = 0; k < K; k++) {
+                    r_hat_ui += P[u][k] * Q[i][k];
+                }
+                
+                const e_ui = r_ui - r_hat_ui; // Error
+                totalError += e_ui ** 2;
+
+                // Update latent features P_u and Q_i
+                for (let k = 0; k < K; k++) {
+                    const P_uk_new = P[u][k] + MF_CONFIG.LEARNING_RATE * (e_ui * Q[i][k] - MF_CONFIG.REGULARIZATION * P[u][k]);
+                    const Q_ik_new = Q[i][k] + MF_CONFIG.LEARNING_RATE * (e_ui * P[u][k] - MF_CONFIG.REGULARIZATION * Q[i][k]);
+                    P[u][k] = P_uk_new;
+                    Q[i][k] = Q_ik_new;
+                }
+            }
+
+            const RMSE = Math.sqrt(totalError / trainingData.length);
+            // console.log(`[MODEL] Iteration ${iter + 1}: RMSE = ${RMSE.toFixed(6)}`);
+            if (RMSE < 0.001) break; // Early stopping
+        }
+        
+        console.log(`[MODEL] Matrix Factorization Training finished after ${iter} iterations.`);
+
+        return { P, Q, userMap, itemMap, itemList, userItemMap };
+    }
+
+    /**
+     * Generates recommendations based on the trained MF model.
+     * @param {string} userId - ID of the target user.
+     * @param {Object} model - The trained model parameters (P, Q, maps, etc.).
+     * @param {number} n - Number of recommendations to generate.
+     * @returns {Array<string>} Array of recommended product IDs.
+     */
+    function getMatrixFactorizationRecommendations(userId, model, n = 3) {
+        const { P, Q, userMap, itemMap, itemList, userItemMap } = model;
+        const K = MF_CONFIG.FACTORS;
+        
+        if (!(userId in userMap)) {
+            console.warn(`[MODEL] User ID ${userId} not found in training data. Cannot recommend.`);
+            return [];
+        }
+
+        const userIndex = userMap[userId];
+        const userPurchases = userItemMap[userId] || new Set();
+        const scores = {};
+
+        // Iterate through all items
+        for (let i = 0; i < itemList.length; i++) {
+            const productId = itemList[i];
+            
+            // Skip items the user has already purchased
+            if (userPurchases.has(productId)) {
+                continue;
+            }
+
+            // Predict the rating/preference for this item: P_u * Q_i^T
+            let predictedScore = 0;
+            for (let k = 0; k < K; k++) {
+                predictedScore += P[userIndex][k] * Q[i][k];
+            }
+            
+            scores[productId] = predictedScore;
+        }
+
+        // Sort candidates by predicted score
+        const sortedRecommendations = Object.entries(scores)
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, n)
+            .map(([productId]) => productId);
+        
+        console.log(`[MODEL] Top candidate scores (MF):`, Object.entries(scores).sort(([, a], [, b]) => b - a).slice(0, 5));
+        console.log(`[MODEL] Final recommendations (MF): ${sortedRecommendations.join(', ')}`);
+        
+        return sortedRecommendations;
+    }
+
+    // --- LLM Explanation Function (Remains the same) ---
+    async function fetchLlmExplanation(recommendedProductId, currentUserId, userPurchasedItems) {
+        const recommendedProduct = PRODUCT_CATALOG[recommendedProductId];
+        if (!recommendedProduct) return "Product details not found for explanation.";
+
+        const apiKey = API_KEY;
+        const apiUrl = `${GEMINI_API_URL}?key=${apiKey}`;
+
+        // Construct a contextual prompt
+        const userHistoryNames = userPurchasedItems.map(id => PRODUCT_CATALOG[id] ? PRODUCT_CATALOG[id].name : `Item ${id}`);
+        
+        const systemPrompt = `You are an e-commerce personalized shopping assistant. Explain briefly and clearly why the product '${recommendedProduct.name}' (Category: ${recommendedProduct.category}) is being recommended to the user (ID: ${currentUserId}). Keep the explanation to one short, friendly paragraph, and focus on the user's past purchases and the concept of 'hidden preferences' or 'latent factors'.`;
+
+        const userQuery = `The user previously purchased: ${userHistoryNames.join(', ')}. The recommendation model used latent factor analysis (Matrix Factorization) to find items with similar hidden attributes. Explain the recommendation based on their past items and potential shared characteristics.`;
+
+        const payload = {
+            contents: [{ parts: [{ text: userQuery }] }],
+            tools: [{ "google_search": {} }],
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+        };
+
+        try {
+            const response = await fetchWithExponentialBackoff(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+            const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "Failed to generate explanation.";
+            
+            return text;
+
+        } catch (error) {
+            console.error("LLM API Call Failed:", error);
+            return "Could not generate AI explanation due to a network or API error.";
+        }
+    }
+
+    // Utility for Exponential Backoff
+    async function fetchWithExponentialBackoff(url, options, retries = 5, delay = 1000) {
+        for (let i = 0; i < retries; i++) {
+            try {
+                const response = await fetch(url, options);
+                if (response.status !== 429 && response.ok) return response; // Success or non-retryable error
+
+                if (response.status === 429 && i < retries - 1) { // Rate limit, and not the last retry
+                    await new Promise(resolve => setTimeout(resolve, delay * (2 ** i)));
+                } else {
+                    return response; // Return response for handling failure
+                }
+            } catch (error) {
+                if (i < retries - 1) {
+                    await new Promise(resolve => setTimeout(resolve, delay * (2 ** i)));
+                } else {
+                    throw error; // Re-throw error on last attempt
+                }
+            }
+        }
+        throw new Error("Fetch failed after multiple retries.");
+    }
+    
+    // --- UI and Execution Logic ---
+
+    function setupUI() {
+        document.getElementById('user-id-display').textContent = currentUserId;
+        
+        const userSelect = document.getElementById('user-select');
+        MOCK_USER_IDS.forEach(id => {
+            const option = document.createElement('option');
+            option.value = id;
+            option.textContent = id;
+            userSelect.appendChild(option);
+        });
+
+        const catalogList = document.getElementById('catalog-list');
+        catalogList.innerHTML = Object.entries(PRODUCT_CATALOG).map(([id, product]) => `
+            <div class="border-b border-gray-100 pb-1">
+                <span class="font-bold text-indigo-700">${id}</span>: ${product.name}
+                <span class="text-gray-400">(${product.category})</span>
+            </div>
+        `).join('');
+
+        // Initial load for the first user
+        updateUserHistory(userSelect.value);
+    }
+    
+    /**
+     * Updates the user purchase history panel.
+     * Exported to window scope so it can be called by the user selection change listener.
+     */
+    async function updateUserHistory(userId) {
+        const historyPanel = document.getElementById('user-history-panel');
+        historyPanel.innerHTML = '<p class="text-sm text-gray-500">Fetching user history...</p>';
+
+        try {
+            const interactions = await getAllInteractions();
+            const userHistoryIds = new Set(
+                interactions
+                    .filter(i => i.user_id === userId && i.interaction_value > 0)
+                    .map(i => i.product_id)
+            );
+
+            if (userHistoryIds.size === 0) {
+                historyPanel.innerHTML = '<p class="text-sm text-red-500 font-bold">No purchase history found for this user.</p>';
+                return;
+            }
+
+            const historyHtml = Array.from(userHistoryIds).map(id => {
+                const product = PRODUCT_CATALOG[id] || { name: `Unknown Item ${id}`, category: 'N/A' };
+                return `
+                    <div class="flex justify-between items-center py-1 border-b border-indigo-100 last:border-b-0">
+                        <span class="font-medium text-gray-800">${product.name}</span>
+                        <span class="text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded">${product.category}</span>
+                    </div>
+                `;
+            }).join('');
+            
+            historyPanel.innerHTML = `
+                <h3 class="text-md font-bold mb-2 text-indigo-800">Purchased Items (${userHistoryIds.size})</h3>
+                ${historyHtml}
+            `;
+            
+        } catch (e) {
+            historyPanel.innerHTML = `<p class="text-sm text-red-500">Error loading history: ${e.message}</p>`;
+        }
+    }
+
+    /**
+     * Main function to fetch data, train model, and display recommendations.
+     * Exported to window scope so it can be called by the HTML button's onclick attribute.
+     */
+    window.fetchRecommendations = async function() {
+        const userSelect = document.getElementById('user-select');
+        const userId = userSelect.value;
+        const recContainer = document.getElementById('recommendations-container');
+        const initialMessage = document.getElementById('initial-message');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const recommendButton = document.getElementById('recommend-button');
+
+        if (!userId) return;
+
+        // 1. UI Reset & Loading State
+        initialMessage.classList.add('hidden');
+        recContainer.classList.add('hidden'); 
+        recContainer.innerHTML = '';
+        loadingSpinner.classList.remove('hidden');
+        recommendButton.disabled = true;
+        console.log(`--- Starting Recommendation for User ${userId} (MF Model) ---`);
+
+        try {
+            // 2. Data Fetch & Model Calculation
+            const allInteractions = await getAllInteractions();
+            
+            if (allInteractions.length === 0) {
+                recContainer.innerHTML = '<p class="text-red-500 font-semibold text-center">Error: No interaction data retrieved from Firestore.</p>';
+                return;
+            }
+            
+            const userHistory = allInteractions.filter(i => i.user_id === userId && i.interaction_value > 0).map(i => i.product_id);
+            if (userHistory.length === 0) {
+                 recContainer.innerHTML = '<p class="text-red-500 font-semibold text-center">No history found for this user. Cannot generate MF recommendations.</p>';
+                 return;
+            }
+            
+            // --- MODEL TRAINING ---
+            const trainedModel = trainMatrixFactorizationModel(allInteractions);
+            const recommendedProductIds = getMatrixFactorizationRecommendations(
+                userId, 
+                trainedModel, 
+                3  // N_RECOMMENDATIONS
+            );
+
+            if (recommendedProductIds.length === 0) {
+                recContainer.innerHTML = '<p class="text-gray-500 font-semibold text-center">Model could not find suitable recommendation candidates. This is common with small, sparse datasets.</p>';
+                return;
+            }
+
+            // 3. Generate UI and Explanations
+            const explanationPromises = recommendedProductIds.map(async (productId, index) => {
+                const product = PRODUCT_CATALOG[productId];
+                const explanation = await fetchLlmExplanation(productId, userId, userHistory);
+
+                const html = `
+                    <div class="bg-gray-50 p-6 rounded-lg shadow-inner">
+                        <h3 class="text-2xl font-bold text-green-700 mb-2">${index + 1}. ${product.name}</h3>
+                        <div class="flex flex-wrap gap-x-4 mb-4 text-sm">
+                             <span class="font-semibold text-indigo-600">ID: ${productId}</span>
+                             <span class="text-gray-500">|</span>
+                             <span class="text-gray-500">Category: ${product.category}</span>
+                             <span class="text-gray-500">|</span>
+                             <span class="font-bold text-red-500">Price: ₹${product.price}</span>
+                        </div>
+                        
+                        <div class="bg-white p-4 rounded-md border border-dashed border-gray-300">
+                             <p class="font-semibold text-gray-700 mb-2">🤖 AI Explanation (Why this product?)</p>
+                             <p class="text-gray-600 italic leading-relaxed">${explanation}</p>
+                        </div>
+                    </div>
+                `;
+                return { index, html };
+            });
+
+            const results = await Promise.all(explanationPromises);
+            results.sort((a, b) => a.index - b.index);
+            recContainer.innerHTML = results.map(r => r.html).join('');
+
+
+        } catch (error) {
+            console.error("Recommendation process failed:", error);
+            recContainer.innerHTML = `<p class="text-red-500 font-semibold text-center">An error occurred: ${error.message}. Check the console for model details.</p>`;
+        } finally {
+            // 4. Cleanup Loading State
+            loadingSpinner.classList.add('hidden');
+            recommendButton.disabled = false;
+            
+            if (recContainer.innerHTML !== '') {
+                recContainer.classList.remove('hidden');
+            } else {
+                 initialMessage.classList.remove('hidden');
+            }
+        }
+    }
+
+    // Event listener for user selection change
+    document.getElementById('user-select').addEventListener('change', (e) => {
+        window.updateUserHistory(e.target.value); 
+        
+        document.getElementById('initial-message').classList.remove('hidden');
+        document.getElementById('recommendations-container').classList.add('hidden');
+        document.getElementById('recommendations-container').innerHTML = '';
+        document.getElementById('loading-spinner').classList.add('hidden');
+    });
+
+    // --- Expose necessary functions to the global window object ---
+    window.fetchRecommendations = window.fetchRecommendations;
+    window.updateUserHistory = updateUserHistory; 
+
+    // Start the application
+    initializeFirebase();
+
+</script>
+</body>
+</html>
