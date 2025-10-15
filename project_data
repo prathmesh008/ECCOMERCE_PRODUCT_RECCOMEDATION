@@ -1,0 +1,27 @@
+{
+  "PRODUCT_CATALOG": {
+    "B07JW9H4J1": { "name": "Wayona Lightning Cable", "category": "Computers&Accessories", "price": 399 },
+    "B09GW5G3C4": { "name": "Smart Watch XYZ", "category": "Electronics", "price": 1999 },
+    "B08F22K63C": { "name": "Ergonomic Office Chair", "category": "Office Furniture", "price": 8999 },
+    "B0BJ611P57": { "name": "Wireless Bluetooth Earbuds", "category": "Electronics", "price": 1299 },
+    "B07D99W7J3": { "name": "Stainless Steel Water Bottle", "category": "Home&Kitchen", "price": 599 },
+    "B07KRRQ837": { "name": "Dog Chew Toy", "category": "Pet Supplies", "price": 299 },
+    "B0CHW33RMP": { "name": "Premium Coffee Maker", "category": "Home&Kitchen", "price": 2499 },
+    "B07GZ58YV5": { "name": "Gaming Headset", "category": "Electronics", "price": 3500 },
+    "B08138P7W7": { "name": "Portable Speaker", "category": "Electronics", "price": 1500 }
+  },
+  "INITIAL_INTERACTIONS_MOCK": [
+    { "userId": "user-101", "productId": "B07JW9H4J1" },
+    { "userId": "user-101", "productId": "B0BJ611P57" },
+    { "userId": "user-102", "productId": "B09GW5G3C4" },
+    { "userId": "user-102", "productId": "B07GZ58YV5" },
+    { "userId": "user-104", "productId": "B0BJ611P57" },
+    { "userId": "user-104", "productId": "B08138P7W7" },
+    { "userId": "user-103", "productId": "B08F22K63C" },
+    { "userId": "user-103", "productId": "B07D99W7J3" },
+    { "userId": "user-105", "productId": "B0CHW33RMP" },
+    { "userId": "user-105", "productId": "B07D99W7J3" },
+    { "userId": "user-106", "productId": "B07KRRQ837" },
+    { "userId": "user-106", "productId": "B07D99W7J3" }
+  ]
+}
